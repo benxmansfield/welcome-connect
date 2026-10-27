@@ -2,7 +2,7 @@
 // Only clientId needs filling in, after you register the app in Microsoft Entra (see README.md).
 window.WC_CONFIG = {
   // Application (client) ID from the Entra app registration
-  clientId: "PASTE-CLIENT-ID-HERE",
+  clientId: "854b99dd-4be8-4b97-af8a-7bf1d65a2ebe",
 
   // Southside's Microsoft 365 tenant
   tenantId: "3b60f06f-e956-4133-897f-6a996928f315",
