@@ -17,7 +17,7 @@
   const INTERESTS = ["Discover", "Have a chat", "Growth Groups", "Serving Teams", "Kids and youth"];
   const INTEREST_LABELS = { "Have a chat": "A chat", "Serving Teams": "Serving" };
 
-  const state = { me: null, role: null, listIds: {}, sundayIdx: 0, cards: null };
+  const state = { me: null, role: null, listIds: {}, sundayIdx: 0, cards: null, counts: null };
 
   // ---------- small helpers ----------
   const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -133,30 +133,71 @@
     </div>`);
   }
 
+  // Triaged = we know where they're at AND the next step is clear
+  // (someone said "I will" follow up, or at least one interest is ticked).
+  const isTriaged = (f) => !!f.Road && f.Road !== "Not sure yet" && (f.FollowUp === "I will" || (f.InterestedIn || []).length > 0);
+  const SERVICES = ["8:30", "10:30"];
+  const countsList = () => state.listIds[C.lists.counts || "Sunday Counts"];
+
   async function loadCards() {
     const since = lastSundays(C.sundaysBack).at(-1);
     const items = await allItems(
       state.listIds[C.lists.nextSteps],
-      "expand=fields(select=Title,HasName,Sunday,Service,Visit,Note,Road,FollowUp,Matched,Source)" +
+      "expand=fields(select=Title,HasName,Sunday,Service,Visit,Note,Road,FollowUp,InterestedIn,Matched,Source)" +
         `&$filter=fields/Sunday ge '${brisMidnightUtc(since)}'&$top=500`
     );
     items.sort((a, b) => String(b.createdDateTime).localeCompare(String(a.createdDateTime)));
     state.cards = items.map((i) => ({ id: i.id, created: i.createdDateTime, by: i.createdBy?.user?.displayName || "", f: i.fields, sunday: fieldDate(i.fields.Sunday) }));
   }
 
+  async function loadCounts() {
+    state.counts = {};
+    if (!countsList()) return;
+    const since = lastSundays(C.sundaysBack).at(-1);
+    const items = await allItems(countsList(), `expand=fields(select=Sunday,Service,NewPeople)&$filter=fields/Sunday ge '${brisMidnightUtc(since)}'&$top=500`);
+    for (const i of items) state.counts[fieldDate(i.fields.Sunday) + "|" + i.fields.Service] = { id: i.id, n: Number(i.fields.NewPeople) || 0 };
+  }
+
+  async function saveCounts(day, values) {
+    for (const svc of SERVICES) {
+      const v = values[svc];
+      if (v === "" || v == null) continue;
+      const n = Math.max(0, Math.round(Number(v)));
+      if (!Number.isFinite(n)) continue;
+      const existing = state.counts[day + "|" + svc];
+      const base = `/sites/${C.siteId}/lists/${countsList()}/items`;
+      if (existing) {
+        if (existing.n !== n) await graph(`${base}/${existing.id}/fields`, { method: "PATCH", body: JSON.stringify({ NewPeople: n }) });
+      } else {
+        await graph(base, { method: "POST", body: JSON.stringify({ fields: { Title: `${day} ${svc}`, Sunday: brisMidnightUtc(day), Service: svc, NewPeople: n } }) });
+      }
+    }
+    await loadCounts();
+  }
+
   async function screenSunday() {
     if (!isLead()) return (location.hash = "#/mine");
     render(`<p class="muted center pad">Loading this Sunday…</p>`);
     if (!state.cards) await loadCards();
+    if (!state.counts) await loadCounts();
     const sundays = lastSundays(C.sundaysBack);
     const i = Math.min(state.sundayIdx, sundays.length - 1);
     const day = sundays[i];
     const firsts = state.cards.filter((c) => c.sunday === day && c.f.Visit === "First time");
-    const tri = firsts.filter((c) => c.f.Road && c.f.Road !== "Not sure yet");
-    const by = (svc) => { const n = firsts.filter((c) => c.f.Service === svc); return `${n.filter((c) => c.f.Road && c.f.Road !== "Not sure yet").length} of ${n.length}`; };
-    const pct = firsts.length ? Math.round((tri.length / firsts.length) * 100) + "%" : "–";
-    const dots = firsts.map((c) => `<span class="dot ${c.f.Road && c.f.Road !== "Not sure yet" ? "tri" : "un"}"></span>`).join("");
-    const todo = state.cards.filter((c) => (!c.f.Road || c.f.Road === "Not sure yet") && !c.f.Matched).slice(0, 5);
+    // Per service: the headcount a team leader entered, or the number of first-time cards if that's higher (or nothing was entered).
+    const svc = SERVICES.map((s) => {
+      const cards = firsts.filter((c) => c.f.Service === s);
+      const entered = state.counts[day + "|" + s];
+      return { s, entered: entered ? entered.n : null, total: Math.max(entered ? entered.n : 0, cards.length), tri: cards.filter((c) => isTriaged(c.f)).length };
+    });
+    const noService = firsts.filter((c) => !SERVICES.includes(c.f.Service));
+    const total = svc.reduce((a, x) => a + x.total, 0) + noService.length;
+    const tri = svc.reduce((a, x) => a + x.tri, 0) + noService.filter((c) => isTriaged(c.f)).length;
+    const pct = total ? Math.round((tri / total) * 100) + "%" : "–";
+    const dots = '<span class="dot tri"></span>'.repeat(tri) + '<span class="dot un"></span>'.repeat(Math.max(0, total - tri));
+    const todo = state.cards.filter((c) => !isTriaged(c.f) && !c.f.Matched).slice(0, 5);
+    const anyEntered = svc.some((x) => x.entered != null);
+    const hcSummary = anyEntered ? "Headcount · " + svc.map((x) => `${x.s} ${x.entered ?? "–"}`).join(" · ") : "Add headcount";
 
     render(`
       <section class="card" aria-labelledby="sun-h">
@@ -165,17 +206,38 @@
           <div class="sun-title"><h1 id="sun-h">${i === 0 ? "This Sunday · " : "Sunday "}${esc(prettyDate(day))}</h1></div>
           <button class="navbtn" id="next" aria-label="Next Sunday" ${i === 0 ? "disabled" : ""}>${chevron("r")}</button>
         </div>
-        <div class="big"><div><strong>${firsts.length}</strong><span>new people</span></div><div><strong>${tri.length}</strong><span>triaged</span></div></div>
-        <div class="dots" role="img" aria-label="${tri.length} of ${firsts.length} new people triaged">${dots || '<span class="muted">No cards yet for this Sunday.</span>'}</div>
-        <div class="split"><span><strong>${pct}</strong> triaged</span><span>8:30 · ${by("8:30")}</span><span>10:30 · ${by("10:30")}</span></div>
+        <div class="big"><div><strong>${total}</strong><span>new people</span></div><div><strong>${tri}</strong><span>triaged</span></div></div>
+        <div class="dots" role="img" aria-label="${tri} of ${total} new people triaged">${dots || '<span class="muted">No new people recorded yet.</span>'}</div>
+        <div class="split"><span><strong>${pct}</strong> triaged</span>${svc.map((x) => `<span>${x.s} · ${x.tri} of ${x.total}</span>`).join("")}</div>
+        <details class="more hc"${anyEntered ? "" : " open"}>
+          <summary>${esc(hcSummary)}<span aria-hidden="true">▾</span></summary>
+          <form id="hc" class="hc-form" novalidate>
+            <p class="hint">How many new people came to each service? Include people who didn't get a card.</p>
+            <div class="hc-row">
+              ${svc.map((x) => `<label class="hc-field"><span class="lbl">${x.s}</span><input class="field" type="number" inputmode="numeric" min="0" step="1" name="${x.s}" value="${x.entered ?? ""}" placeholder="0"></label>`).join("")}
+              <button class="btn btn-primary btn-sm" id="hc-save" type="submit">Save</button>
+            </div>
+            <p id="hc-err" class="error" role="alert" hidden></p>
+          </form>
+        </details>
       </section>
       <a class="btn btn-primary" href="#/add">＋ Add new person</a>
       <section>
         <div class="row-head"><h2>Triage these first</h2><a href="${esc(C.siteUrl)}/Lists/Next%20Steps/AllItems.aspx" target="_blank" rel="noopener" style="font-size:14px">All cards</a></div>
         <ul class="list" style="margin-top:10px">${todo.length ? todo.map(cardRow).join("") : '<li class="item"><span class="muted">Nothing waiting. Nice work.</span></li>'}</ul>
+        <p class="hint" style="margin-top:8px;padding:0 2px">Triaged = we know where they're at with Jesus, and someone's following up or they're interested in a next step.</p>
       </section>`);
     document.getElementById("prev").onclick = () => { state.sundayIdx = i + 1; screenSunday(); };
     document.getElementById("next").onclick = () => { state.sundayIdx = Math.max(0, i - 1); screenSunday(); };
+    document.getElementById("hc").onsubmit = async (e) => {
+      e.preventDefault();
+      const btn = document.getElementById("hc-save"), err = document.getElementById("hc-err");
+      if (!countsList()) { err.hidden = false; err.textContent = "The Sunday Counts list is missing from SharePoint."; return; }
+      const values = Object.fromEntries(SERVICES.map((s) => [s, e.target.elements[s].value.trim()]));
+      btn.disabled = true; btn.textContent = "Saving…";
+      try { await saveCounts(day, values); screenSunday(); }
+      catch (ex) { btn.disabled = false; btn.textContent = "Save"; err.hidden = false; err.textContent = ex.message; }
+    };
   }
 
   function cardRow(c) {
@@ -231,7 +293,7 @@
         <details class="more">
           <summary>Anything else? <span class="opt">(optional)</span><span aria-hidden="true">▾</span></summary>
           <div style="display:flex;flex-direction:column;gap:18px">
-            <div class="q"><span class="lbl">Where are they at with Jesus?</span>${pills("road", ROADS, false)}<span class="hint">Only if it came up naturally. Picking one counts as triaged.</span></div>
+            <div class="q"><span class="lbl">Where are they at with Jesus?</span>${pills("road", ROADS, false)}<span class="hint">Only if it came up naturally.</span></div>
             <div class="q"><span class="lbl">Interested in</span>${pills("interests", INTERESTS, true, INTEREST_LABELS)}</div>
             <div class="q"><label class="lbl" for="contact">Contact <span class="opt">(only if they offered it)</span></label>
               <input id="contact" class="field" autocomplete="off" placeholder="Mobile or email">${pills("pref", ["Text", "Call", "Email"], false)}</div>

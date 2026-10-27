@@ -12,7 +12,7 @@ window.WC_CONFIG = {
   siteUrl: "https://southsideau.sharepoint.com/sites/WelcomeConnect",
 
   // List names (must match SharePoint exactly)
-  lists: { nextSteps: "Next Steps", people: "People", team: "Team" },
+  lists: { nextSteps: "Next Steps", people: "People", team: "Team", counts: "Sunday Counts" },
 
   // How many Sundays back the This Sunday screen can step through
   sundaysBack: 8,
