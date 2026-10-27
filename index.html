@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en-AU">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#1E2B48">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Welcome">
+<title>Welcome &amp; Connect</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="bar">
+    <div class="bar-in">
+      <div class="brand">
+        <span class="logo" aria-hidden="true">
+          <svg width="20" height="24" viewBox="120 88 236 282"><path fill="#575A70" d="M127 148 L238 94 L238 153 L170 186 L170 206 L238 173 L238 232 L127 286Z M127 305 L238 251 L238 310 L127 364Z"/><path fill="#1B2A47" d="M238 94 L350 148 L350 207 L238 153Z M238 173 L350 227 L350 364 L238 310 L238 251 L306 284 L306 264 L238 232Z"/></svg>
+        </span>
+        <span class="brand-name">Welcome &amp; Connect</span>
+      </div>
+      <nav id="nav" class="nav" hidden>
+        <a href="#/sunday" data-role="lead">This Sunday</a>
+        <button id="me" class="me" type="button" aria-label="Signed in. Tap to sign out"></button>
+      </nav>
+    </div>
+  </header>
+
+  <main id="app" class="wrap" aria-live="polite">
+    <p class="muted center pad">Loading…</p>
+  </main>
+
+  <script src="https://cdn.jsdelivr.net/npm/@azure/msal-browser@3.27.0/lib/msal-browser.min.js" integrity="sha384-8zg7Eb13Jv4vByCkXozj1LKSUykPghS+Zp1Q9BA8lYkMDbushxoDjh+RQ+4r1DNd" crossorigin="anonymous"></script>
+  <script src="config.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
